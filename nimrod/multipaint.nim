@@ -36,10 +36,10 @@ proc changeColor(screen: TScreen, currentColor: var int, down: bool) =
 
 proc drawDot(screen: TScreen, x, y: int, color: int) =
   if x+1 <% screen.mainSurface.w and y+1 <% screen.mainSurface.h:
-    screen.mainSurface.setPixel(x, y, drawColors[color])
-    screen.mainSurface.setPixel(x+1, y, drawColors[color])
-    screen.mainSurface.setPixel(x, y+1, drawColors[color])
-    screen.mainSurface.setPixel(x+1, y+1, drawColors[color])
+    screen.mainSurface[x, y] = drawColors[color]
+    screen.mainSurface[x+1, y] = drawColors[color]
+    screen.mainSurface[x, y+1] = drawColors[color]
+    screen.mainSurface[x+1, y+1] = drawColors[color]
 
 proc drawPacketsLen(screen: TScreen, packets: int) =
   var text = $packets & " packets"
@@ -52,8 +52,7 @@ proc drawPacketsLen(screen: TScreen, packets: int) =
 proc openConnection(server: string): TSocket = 
   echo("Connecting to: " & server)
   result = socket(sockets.AF_INET, sockets.SOCK_DGRAM, sockets.IPPROTO_UDP)
-  if fcntl(cint(result), F_SETFL, O_NONBLOCK) == -1:
-    OSError()
+  result.setBlocking(false)
   if result == InvalidSocket:
     OSError()
   result.connect(server, TPort(5303))
@@ -118,7 +117,7 @@ proc parse(screen: TScreen, line: string) =
   
   else: echo("Not implemented")
 
-proc nonBlockingRecv(sock: TSocket, line: var string): int =
+discard """proc nonBlockingRecv(sock: TSocket, line: var string): int =
   var bufSize = 65536
   line = newString(bufSize)
   var bytesRead = recv(sock, cstring(line), bufSize-1)
@@ -132,13 +131,13 @@ proc nonBlockingRecv(sock: TSocket, line: var string): int =
 proc nonBlockingRecvFrom(sock: TSocket, line: var string): int =
   var bufSize = 65536
   line = newString(bufSize)
-  var bytesRead = recvFrom(cint(sock), cstring(line), bufSize-1, MSG_OOB, nil, nil)
+  var bytesRead = recvFrom(sock, line, bufSize-1)
 
   if bytesRead == -1:
     return -1
   line[bytesRead] = '\0'
   setLen(line, bytesRead)
-  return bytesRead
+  return bytesRead"""
 
 proc sendDraw(sock: TSocket, cx, cy: int, color: int) =
   var x = cx shr 8
@@ -150,7 +149,7 @@ proc sendDraw(sock: TSocket, cx, cy: int, color: int) =
 
 proc sendPing(sock: TSocket) =
   var time = epochTime()
-  sock.send("\x00\x06" & formatFloat(time))
+  sock.send("\x00\x06" & $time)
 
 proc sendErase(sock: TSocket, cx, cy: int) =
   var x = cx shr 8
@@ -161,7 +160,7 @@ proc sendErase(sock: TSocket, cx, cy: int) =
 
 when isMainModule:
   echo init(INIT_EVERYTHING)
-  initDefaultFont(name="/usr/share/fonts/truetype/ttf-dejavu/DejaVuSansMono.ttf", color = colRed)
+  initDefaultFont(name="/usr/share/fonts/TTF/verdana.ttf", color = colRed)
   var ver: TVersion
   VERSION(ver)
   echo("Running sdl version: " & $ver.major & "." & $ver.minor & "." & $ver.patch)
@@ -188,15 +187,17 @@ when isMainModule:
 
   while True:
     # Poll socket
-    var line: string
-    if sock.nonBlockingRecv(line) > 0:
+    var line: string = newString(65536)
+    var address: string
+    var port: TPort
+    if sock.recvFromAsync(line, 65536-1, address, port):
       screen.parse($line)
       inc(packetsRecv)
       screen.drawPacketsLen(packetsRecv)
     
     var time = epochTime()
     if time - latestPing > 3.0:
-      echo("PING, ", formatFloat(time - latestPing))
+      #echo("PING, ", formatFloat(time - latestPing))
       sock.sendPing()
       latestPing = time
     
